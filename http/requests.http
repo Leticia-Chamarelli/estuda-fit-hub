@@ -1,6 +1,38 @@
 ### Saúde
 GET http://localhost:8080/health
 
+### Serviço de Cobrança: saúde
+GET http://localhost:8081/health
+
+### Serviço de Cobrança: faturas de um aluno (rota interna)
+GET http://localhost:8081/faturas?aluno_id=2001
+X-Servico-Token: token-local
+
+### Serviço de Cobrança: gerar fatura de uma competência (idempotente)
+POST http://localhost:8081/assinaturas/2001/faturas
+Content-Type: application/json
+X-Servico-Token: token-local
+
+{
+  "competencia": "2026-11"
+}
+
+### Serviço de Cobrança: feed de eventos
+GET http://localhost:8081/eventos?apos=0&limite=20
+X-Servico-Token: token-local
+
+### Serviço de Cobrança: webhook direto (estado final, gateway apontando para o serviço)
+POST http://localhost:8081/webhooks/pagamento
+Content-Type: application/json
+
+{
+  "reference": "gwc_...",
+  "status": "approved",
+  "amount": 119.90,
+  "method": "pix",
+  "event_id": "evt_direto_1"
+}
+
 ### Criar aluno
 POST http://localhost:8080/alunos
 Content-Type: application/json

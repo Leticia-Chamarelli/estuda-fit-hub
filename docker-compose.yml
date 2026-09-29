@@ -1,4 +1,27 @@
+x-monolito-env: &monolito-env
+  DB_HOST: db
+  DB_PORT: "3306"
+  DB_NAME: estuda_fit_hub
+  DB_USER: estuda_fit_hub
+  DB_PASS: estuda_fit_hub
+  # Latencia simulada das integracoes externas (ms). Aumente para sentir o acoplamento.
+  NOTIFICACAO_LATENCIA_MS: "150"
+  GATEWAY_LATENCIA_MS: "2"
+  COBRANCA_URL: http://cobranca:8080
+  COBRANCA_TOKEN: token-local
+
+x-cobranca-env: &cobranca-env
+  COBRANCA_DB_HOST: db
+  COBRANCA_DB_PORT: "3306"
+  COBRANCA_DB_NAME: cobranca
+  COBRANCA_DB_USER: cobranca
+  COBRANCA_DB_PASS: cobranca
+  COBRANCA_TOKEN: token-local
+  GATEWAY_LATENCIA_MS: "2"
+  EVENTOS_ATRASO_MS: "1000"
+
 services:
+  # Monólito (API)
   app:
     build: .
     container_name: estuda-fit-hub-app
@@ -7,14 +30,68 @@ services:
     volumes:
       - .:/app
     environment:
-      DB_HOST: db
-      DB_PORT: "3306"
-      DB_NAME: estuda_fit_hub
-      DB_USER: estuda_fit_hub
-      DB_PASS: estuda_fit_hub
-      # Latencia simulada das integracoes externas (ms). Aumente para sentir o acoplamento.
-      NOTIFICACAO_LATENCIA_MS: "150"
-      GATEWAY_LATENCIA_MS: "2"
+      <<: *monolito-env
+      PHP_CLI_SERVER_WORKERS: "4"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  # Monólito: inbox do webhook, outbox de comandos e consumo do feed de Cobrança
+  worker:
+    build: .
+    container_name: estuda-fit-hub-worker
+    command: ["php", "bin/console", "cobranca:worker", "--intervalo=2"]
+    volumes:
+      - .:/app
+    environment: *monolito-env
+    restart: unless-stopped
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  # Serviço de Cobrança (API)
+  cobranca:
+    build: ./servicos/cobranca
+    container_name: estuda-fit-hub-cobranca
+    ports:
+      - "8081:8080"
+    volumes:
+      - ./servicos/cobranca:/servico
+    environment:
+      <<: *cobranca-env
+      PHP_CLI_SERVER_WORKERS: "4"
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  # Serviço de Cobrança: registro no gateway fora da transação
+  cobranca-worker:
+    build: ./servicos/cobranca
+    container_name: estuda-fit-hub-cobranca-worker
+    command: ["php", "bin/console", "gateway:registrar", "--loop"]
+    volumes:
+      - ./servicos/cobranca:/servico
+    environment: *cobranca-env
+    restart: unless-stopped
+    depends_on:
+      setup:
+        condition: service_completed_successfully
+
+  # Uma vez só: cria os schemas e popula o monólito se o banco estiver vazio
+  setup:
+    build: .
+    container_name: estuda-fit-hub-setup
+    volumes:
+      - .:/app
+    environment:
+      <<: [*monolito-env, *cobranca-env]
+    command:
+      - sh
+      - -c
+      - >-
+        php bin/console db:migrate --se-vazio &&
+        php bin/console db:seed --se-vazio &&
+        cd servicos/cobranca && php bin/console db:migrate --se-vazio
     depends_on:
       db:
         condition: service_healthy
@@ -22,6 +99,8 @@ services:
   db:
     image: mysql:8.4
     container_name: estuda-fit-hub-db
+    # Triggers de transição criados por usuário sem SUPER com binlog ligado.
+    command: ["--log-bin-trust-function-creators=1"]
     ports:
       - "3316:3306"
     environment:

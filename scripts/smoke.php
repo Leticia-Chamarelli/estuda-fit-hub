@@ -66,12 +66,18 @@ $checkin = chamar('POST', '/checkins', ['cpf' => $cpf, 'unidade_id' => 1]);
 esperar($checkin['dados']['liberado'] === true, 'check-in liberado com fatura em aberto');
 
 $webhook = chamar('POST', '/webhooks/pagamento', [
-    'reference' => $referencia, 'status' => 'approved', 'amount' => 119.90, 'method' => 'pix', 'event_id' => 'evt_smoke_1',
+    'reference' => $referencia, 'status' => 'approved', 'amount' => 119.90, 'method' => 'pix', 'event_id' => "evt_smoke_{$cpf}",
 ]);
-esperar($webhook['status'] === 204, 'webhook de pagamento aceito');
+esperar($webhook['status'] === 202, 'webhook de pagamento aceito na inbox');
 
-$faturas = chamar('GET', "/alunos/{$alunoId}/faturas");
-esperar(($faturas['dados']['faturas'][0]['status'] ?? null) === 'paga', 'fatura marcada como paga');
+// O webhook é processado pelo worker (container `worker`), não na requisição do gateway.
+$paga = false;
+for ($i = 0; $i < 20 && !$paga; $i++) {
+    usleep(500_000);
+    $faturas = chamar('GET', "/alunos/{$alunoId}/faturas");
+    $paga = ($faturas['dados']['faturas'][0]['status'] ?? null) === 'paga';
+}
+esperar($paga, 'fatura marcada como paga pelo worker');
 
 $relatorio = chamar('GET', '/relatorios/inadimplencia?unidade_id=1');
 esperar($relatorio['status'] === 200, 'relatório de inadimplência responde');
