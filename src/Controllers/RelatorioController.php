@@ -10,7 +10,9 @@ use EstudaFitHub\Support\DB;
 use EstudaFitHub\Support\HttpException;
 
 /**
- * Relatórios gerenciais. Todos fazem JOIN entre tabelas de domínios diferentes.
+ * Relatórios gerenciais. Continuam sendo JOIN local, mas a parte financeira vem do modelo
+ * de leitura fin_faturas, que cobre legado e serviço ao mesmo tempo. Nenhuma etapa da
+ * migração muda estas consultas; o atraso máximo é o do consumidor de eventos.
  */
 final class RelatorioController
 {
@@ -23,9 +25,9 @@ final class RelatorioController
 
         $linhas = DB::select(
             'SELECT a.id AS aluno_id, a.nome, a.telefone, u.nome AS unidade, p.nome AS plano,
-                    COUNT(f.id) AS faturas_vencidas, SUM(f.valor) AS total_devido,
+                    COUNT(f.codigo) AS faturas_vencidas, SUM(f.valor) AS total_devido,
                     MIN(f.vencimento) AS vencida_desde
-               FROM faturas f
+               FROM fin_faturas f
                JOIN alunos a      ON a.id = f.aluno_id
                JOIN unidades u    ON u.id = a.unidade_id
                JOIN matriculas m  ON m.id = f.matricula_id
@@ -48,14 +50,13 @@ final class RelatorioController
 
         $linhas = DB::select(
             'SELECT u.nome AS unidade, p.nome AS plano,
-                    COUNT(pg.id) AS pagamentos, SUM(pg.valor) AS receita
-               FROM pagamentos pg
-               JOIN faturas f     ON f.id = pg.fatura_id
+                    SUM(f.qtd_pagamentos) AS pagamentos, SUM(f.valor_pago) AS receita
+               FROM fin_faturas f
                JOIN matriculas m  ON m.id = f.matricula_id
                JOIN planos p      ON p.id = m.plano_id
                JOIN alunos a      ON a.id = f.aluno_id
                JOIN unidades u    ON u.id = a.unidade_id
-              WHERE f.competencia = ?
+              WHERE f.competencia = ? AND f.qtd_pagamentos > 0
               GROUP BY u.nome, p.nome
               ORDER BY receita DESC',
             [$competencia . '-01'],

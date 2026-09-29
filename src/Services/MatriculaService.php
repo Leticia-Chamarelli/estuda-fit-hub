@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace EstudaFitHub\Services;
 
+use EstudaFitHub\Cobranca\Outbox;
+use EstudaFitHub\Cobranca\Roteamento;
 use EstudaFitHub\Models\Aluno;
 use EstudaFitHub\Models\Fatura;
 use EstudaFitHub\Models\Matricula;
@@ -25,17 +27,14 @@ final class MatriculaService
             throw new HttpException(422, 'Aluno já possui matrícula ativa');
         }
 
-        return DB::transaction(function () use ($aluno, $plano, $diaVencimento): Matricula {
-            $matricula = Matricula::create([
-                'aluno_id' => $aluno->id,
-                'plano_id' => $plano->id,
-                'inicio' => date('Y-m-d'),
-                'fim' => date('Y-m-d', strtotime("+{$plano->duracao_meses} months")),
-                'status' => 'ativa',
-                'dia_vencimento' => $diaVencimento,
-            ]);
+        if (Roteamento::migrada((int) $aluno->unidade_id)) {
+            return $this->criarComServico($aluno, $plano, $diaVencimento);
+        }
 
-            // Cobrança acoplada: a primeira fatura nasce aqui, dentro da mesma transação.
+        return DB::transaction(function () use ($aluno, $plano, $diaVencimento): Matricula {
+            $matricula = $this->novaMatricula($aluno, $plano, $diaVencimento);
+
+            // Caminho legado (unidades não migradas), preservado como era até a unidade migrar.
             $fatura = Fatura::create([
                 'matricula_id' => $matricula->id,
                 'aluno_id' => $aluno->id,
@@ -45,19 +44,57 @@ final class MatriculaService
                 'status' => 'aberta',
             ]);
 
-            // Chamada externa (gateway) dentro da transação.
             $referencia = (new GatewayPagamento())->registrarCobranca($fatura);
             $fatura->update(['gateway_ref' => $referencia]);
 
-            if ($aluno->situacao !== 'ativo') {
-                $aluno->update(['situacao' => 'ativo']);
-            }
-
-            // Notificação síncrona dentro da transação.
             (new NotificacaoService())->enviarEmail($aluno, 'fatura_gerada', ['fatura' => $fatura->toArray()]);
 
             return $matricula;
         });
+    }
+
+    /**
+     * Unidade migrada: a matrícula e o comando para Cobrança são gravados na mesma transação.
+     * Nada de gateway nem e-mail aqui dentro; a primeira fatura nasce no serviço e o e-mail sai
+     * quando o monólito consome o evento FaturaGerada.
+     */
+    private function criarComServico(Aluno $aluno, Plano $plano, int $diaVencimento): Matricula
+    {
+        return DB::transaction(function () use ($aluno, $plano, $diaVencimento): Matricula {
+            $matricula = $this->novaMatricula($aluno, $plano, $diaVencimento);
+
+            Outbox::registrar(Outbox::MATRICULA_CRIADA, "matricula:{$matricula->id}", [
+                'matricula_id' => (int) $matricula->id,
+                'aluno_id' => (int) $aluno->id,
+                'unidade_id' => (int) $aluno->unidade_id,
+                'plano_id' => (int) $plano->id,
+                'valor_mensal' => (string) $plano->valor_mensal,
+                'dia_vencimento' => $diaVencimento,
+                'inicio' => $matricula->inicio,
+                'fim' => $matricula->fim,
+                'primeiro_vencimento' => date('Y-m-d', strtotime('+3 days')),
+            ]);
+
+            return $matricula;
+        });
+    }
+
+    private function novaMatricula(Aluno $aluno, Plano $plano, int $diaVencimento): Matricula
+    {
+        $matricula = Matricula::create([
+            'aluno_id' => $aluno->id,
+            'plano_id' => $plano->id,
+            'inicio' => date('Y-m-d'),
+            'fim' => date('Y-m-d', strtotime("+{$plano->duracao_meses} months")),
+            'status' => 'ativa',
+            'dia_vencimento' => $diaVencimento,
+        ]);
+
+        if ($aluno->situacao !== 'ativo') {
+            $aluno->update(['situacao' => 'ativo']);
+        }
+
+        return $matricula;
     }
 
     public function cancelar(Matricula $matricula): void
@@ -66,19 +103,28 @@ final class MatriculaService
             throw new HttpException(422, 'Matrícula já cancelada');
         }
 
-        DB::transaction(function () use ($matricula): void {
+        $aluno = $matricula->aluno();
+        $migrada = $aluno !== null && Roteamento::migrada((int) $aluno->unidade_id);
+
+        DB::transaction(function () use ($matricula, $aluno, $migrada): void {
             $matricula->update(['status' => 'cancelada', 'fim' => date('Y-m-d')]);
 
-            // Cobrança acoplada: cancelamento mexe direto nas faturas.
-            Fatura::where('matricula_id', $matricula->id)
-                ->whereIn('status', ['aberta', 'vencida'])
-                ->update(['status' => 'cancelada']);
-
-            $aluno = $matricula->aluno();
-            if ($aluno !== null) {
-                $aluno->update(['situacao' => 'inativo']);
-                (new NotificacaoService())->enviarEmail($aluno, 'matricula_cancelada', ['matricula_id' => $matricula->id]);
+            if ($migrada) {
+                Outbox::registrar(Outbox::MATRICULA_CANCELADA, "matricula:{$matricula->id}", [
+                    'matricula_id' => (int) $matricula->id,
+                    'cancelada_em' => date('Y-m-d'),
+                ]);
+            } else {
+                Fatura::where('matricula_id', $matricula->id)
+                    ->whereIn('status', ['aberta', 'vencida'])
+                    ->update(['status' => 'cancelada']);
             }
+
+            $aluno?->update(['situacao' => 'inativo']);
         });
+
+        if ($aluno !== null) {
+            (new NotificacaoService())->enviarEmail($aluno, 'matricula_cancelada', ['matricula_id' => $matricula->id]);
+        }
     }
 }

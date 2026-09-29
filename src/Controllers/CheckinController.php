@@ -4,15 +4,18 @@ declare(strict_types=1);
 
 namespace EstudaFitHub\Controllers;
 
+use EstudaFitHub\Cobranca\SituacaoFinanceira;
 use EstudaFitHub\Http\Request;
 use EstudaFitHub\Http\Response;
 use EstudaFitHub\Models\Aluno;
 use EstudaFitHub\Models\Checkin;
-use EstudaFitHub\Models\Fatura;
 use EstudaFitHub\Support\HttpException;
 
 /**
  * Chamado pela catraca. Precisa responder em menos de 300 ms no p95.
+ *
+ * Não lê `faturas` nem chama o serviço de Cobrança: a situação financeira vem do modelo
+ * de leitura local (fin_faturas), então a catraca funciona com Cobrança fora do ar.
  */
 final class CheckinController
 {
@@ -26,11 +29,7 @@ final class CheckinController
             throw new HttpException(404, 'Aluno não encontrado');
         }
 
-        // Acoplamento: regra de negócio de Cobrança embutida no Check-in.
-        $inadimplente = Fatura::where('aluno_id', $aluno->id)
-            ->where('status', 'vencida')
-            ->where('vencimento', '<', date('Y-m-d', strtotime('-5 days')))
-            ->exists();
+        $inadimplente = SituacaoFinanceira::bloqueiaCatraca((int) $aluno->id);
 
         $liberado = $aluno->situacao === 'ativo' && !$inadimplente;
 

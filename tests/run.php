@@ -14,6 +14,7 @@ putenv('NOTIFICACAO_LATENCIA_MS=0');
 putenv('GATEWAY_LATENCIA_MS=0');
 
 require __DIR__ . '/../bootstrap.php';
+require __DIR__ . '/FakeCobrancaClient.php';
 require __DIR__ . '/TestCase.php';
 
 use EstudaFitHub\Console\DbMigrate;

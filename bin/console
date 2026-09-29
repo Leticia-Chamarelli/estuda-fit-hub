@@ -5,18 +5,26 @@ declare(strict_types=1);
 
 require __DIR__ . '/../bootstrap.php';
 
+use EstudaFitHub\Console\CobrancaMigrarUnidade;
 use EstudaFitHub\Console\CobrancaRegua;
+use EstudaFitHub\Console\CobrancaReverterUnidade;
+use EstudaFitHub\Console\CobrancaWorker;
 use EstudaFitHub\Console\DbMigrate;
 use EstudaFitHub\Console\DbSeed;
 use EstudaFitHub\Console\FaturasGerarMensais;
 use EstudaFitHub\Console\FaturasMarcarVencidas;
+use EstudaFitHub\Console\Reconciliacao;
 
 $comandos = [
-    'db:migrate' => [DbMigrate::class, 'Recria o schema do zero'],
-    'db:seed' => [DbSeed::class, 'Popula dados fictícios (--alunos=N, padrão 2000)'],
-    'faturas:gerar-mensais' => [FaturasGerarMensais::class, 'Cron do dia 1º: gera faturas da competência ([YYYY-MM])'],
-    'faturas:marcar-vencidas' => [FaturasMarcarVencidas::class, 'Cron diário: abertas vencidas viram "vencida"'],
-    'cobranca:regua' => [CobrancaRegua::class, 'Cron diário: lembretes e bloqueio por inadimplência (--limite=N)'],
+    'db:migrate' => [DbMigrate::class, 'Recria o schema do zero (--se-vazio: só se ainda não existir)'],
+    'db:seed' => [DbSeed::class, 'Popula dados fictícios (--alunos=N, padrão 2000; --se-vazio)'],
+    'faturas:gerar-mensais' => [FaturasGerarMensais::class, 'Cron legado do dia 1º ([YYYY-MM]); ignora unidades migradas'],
+    'faturas:marcar-vencidas' => [FaturasMarcarVencidas::class, 'Cron legado diário; ignora unidades migradas'],
+    'cobranca:regua' => [CobrancaRegua::class, 'Cron diário: lembretes e bloqueio (--limite=N), lê fin_faturas'],
+    'cobranca:worker' => [CobrancaWorker::class, 'Inbox do webhook, outbox e feed de eventos (--uma-vez, --intervalo=N)'],
+    'cobranca:migrar-unidade' => [CobrancaMigrarUnidade::class, 'Corte de uma unidade para o serviço (<unidade_id>)'],
+    'cobranca:reconciliar' => [Reconciliacao::class, 'Compara legado e serviço de uma unidade (<unidade_id>)'],
+    'cobranca:reverter-unidade' => [CobrancaReverterUnidade::class, 'Rollback de uma unidade para o legado (<unidade_id>)'],
 ];
 
 $nome = $argv[1] ?? '';

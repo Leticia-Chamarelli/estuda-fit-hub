@@ -4,12 +4,13 @@ declare(strict_types=1);
 
 namespace EstudaFitHub\Controllers;
 
+use EstudaFitHub\Cobranca\SituacaoFinanceira;
 use EstudaFitHub\Http\Request;
 use EstudaFitHub\Http\Response;
 use EstudaFitHub\Models\Aluno;
-use EstudaFitHub\Models\Fatura;
 use EstudaFitHub\Models\Matricula;
 use EstudaFitHub\Models\Unidade;
+use EstudaFitHub\Support\DB;
 use EstudaFitHub\Support\HttpException;
 
 final class AlunoController
@@ -53,16 +54,10 @@ final class AlunoController
             Matricula::where('aluno_id', $aluno->id)->orderBy('id', 'DESC')->get(),
         );
 
-        // Acoplamento: a tela do aluno resume a situação financeira lendo faturas direto.
-        $resumoFinanceiro = [
-            'faturas_abertas' => Fatura::where('aluno_id', $aluno->id)->where('status', 'aberta')->count(),
-            'faturas_vencidas' => Fatura::where('aluno_id', $aluno->id)->where('status', 'vencida')->count(),
-        ];
-
         return Response::json([
             'aluno' => $aluno->toArray(),
             'matriculas' => $matriculas,
-            'financeiro' => $resumoFinanceiro,
+            'financeiro' => SituacaoFinanceira::resumo((int) $aluno->id),
         ]);
     }
 
@@ -73,9 +68,10 @@ final class AlunoController
             throw new HttpException(404, 'Aluno não encontrado');
         }
 
-        $faturas = array_map(
-            static fn (Fatura $f): array => $f->toArray(),
-            Fatura::where('aluno_id', $aluno->id)->orderBy('competencia', 'DESC')->get(),
+        $faturas = DB::select(
+            'SELECT codigo, matricula_id, aluno_id, competencia, valor, vencimento, status, pago_em, valor_pago, origem
+               FROM fin_faturas WHERE aluno_id = ? ORDER BY competencia DESC',
+            [$aluno->id],
         );
 
         return Response::json(['aluno_id' => $aluno->id, 'faturas' => $faturas]);

@@ -23,10 +23,19 @@ final class DbSeed implements Comando
         'Klein', 'Lima', 'Martins', 'Nogueira', 'Oliveira', 'Pereira', 'Queiroz', 'Ribeiro', 'Santos', 'Teixeira',
     ];
 
-    private const TABELAS = ['notificacoes', 'checkins', 'pagamentos', 'faturas', 'matriculas', 'planos', 'alunos', 'unidades'];
+    private const TABELAS = [
+        'notificacoes', 'checkins', 'pagamentos', 'faturas', 'matriculas', 'planos', 'alunos', 'unidades',
+        'fin_faturas', 'cobranca_roteamento', 'cobranca_outbox', 'cobranca_consumo', 'cobranca_eventos_aplicados', 'webhook_inbox',
+    ];
 
     public function executar(array $args): int
     {
+        if (in_array('--se-vazio', $args, true) && DB::selectOne('SELECT 1 FROM alunos LIMIT 1') !== null) {
+            echo "Banco já populado, nada a fazer\n";
+
+            return 0;
+        }
+
         $quantidadeAlunos = 2000;
         foreach ($args as $arg) {
             if (preg_match('/^--alunos=(\d+)$/', $arg, $m)) {

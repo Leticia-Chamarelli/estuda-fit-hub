@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace EstudaFitHub\Controllers;
 
+use EstudaFitHub\Cobranca\Roteamento;
 use EstudaFitHub\Http\Request;
 use EstudaFitHub\Http\Response;
 use EstudaFitHub\Models\Aluno;
@@ -30,11 +31,22 @@ final class MatriculaController
 
         $matricula = (new MatriculaService())->criar($aluno, $plano, (int) $request->input('dia_vencimento'));
 
+        // Unidade migrada: a primeira fatura é gerada pelo serviço, alguns segundos depois.
+        // O cliente acompanha por GET /alunos/{id}/faturas.
+        if (Roteamento::migrada((int) $aluno->unidade_id)) {
+            return Response::json([
+                'matricula' => $matricula->toArray(),
+                'primeira_fatura' => null,
+                'cobranca' => 'em_processamento',
+            ], 201);
+        }
+
         $primeiraFatura = Fatura::where('matricula_id', $matricula->id)->first();
 
         return Response::json([
             'matricula' => $matricula->toArray(),
             'primeira_fatura' => $primeiraFatura?->toArray(),
+            'cobranca' => 'legado',
         ], 201);
     }
 

@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace EstudaFitHub\Console;
 
+use EstudaFitHub\Cobranca\Roteamento;
+use EstudaFitHub\Models\Aluno;
 use EstudaFitHub\Models\Fatura;
 use EstudaFitHub\Models\Matricula;
 use EstudaFitHub\Services\GatewayPagamento;
 
 /**
- * Cron do dia 1º: gera a fatura da competência para toda matrícula ativa.
+ * Cron LEGADO do dia 1º: gera a fatura da competência para toda matrícula ativa
+ * de unidades que ainda não migraram. As migradas são do cron do serviço.
  * Uso: php bin/console faturas:gerar-mensais [YYYY-MM]
  */
 final class FaturasGerarMensais implements Comando
@@ -27,12 +30,19 @@ final class FaturasGerarMensais implements Comando
         }
 
         $gateway = new GatewayPagamento();
+        $migradas = array_flip(Roteamento::unidadesMigradas());
         $geradas = 0;
         $puladas = 0;
+        $ignoradas = 0;
 
-        Matricula::where('status', 'ativa')->chunk(1000, function (array $matriculas) use ($competencia, $gateway, &$geradas, &$puladas): void {
+        Matricula::where('status', 'ativa')->chunk(1000, function (array $matriculas) use ($competencia, $gateway, $migradas, &$geradas, &$puladas, &$ignoradas): void {
             /** @var Matricula $m */
             foreach ($matriculas as $m) {
+                if ($migradas !== [] && isset($migradas[(int) Aluno::find((int) $m->aluno_id)?->unidade_id])) {
+                    $ignoradas++;
+                    continue;
+                }
+
                 if (Fatura::where('matricula_id', $m->id)->where('competencia', $competencia)->exists()) {
                     $puladas++;
                     continue;
@@ -58,7 +68,7 @@ final class FaturasGerarMensais implements Comando
             }
         });
 
-        echo "Competência {$competencia}: {$geradas} faturas geradas, {$puladas} já existiam\n";
+        echo "Competência {$competencia}: {$geradas} faturas geradas, {$puladas} já existiam, {$ignoradas} de unidades migradas\n";
 
         return 0;
     }

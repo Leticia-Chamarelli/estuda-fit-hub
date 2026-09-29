@@ -15,12 +15,25 @@ final class FalhaDeAssercao extends RuntimeException
 
 abstract class TestCase
 {
-    private const TABELAS = ['notificacoes', 'checkins', 'pagamentos', 'faturas', 'matriculas', 'planos', 'alunos', 'unidades'];
+    private const TABELAS = [
+        'notificacoes', 'checkins', 'pagamentos', 'faturas', 'matriculas', 'planos', 'alunos', 'unidades',
+        'fin_faturas', 'cobranca_roteamento', 'cobranca_outbox', 'cobranca_consumo', 'cobranca_eventos_aplicados', 'webhook_inbox',
+    ];
 
     private static int $sequencia = 0;
 
+    protected FakeCobrancaClient $cobranca;
+
     public function setUp(): void
     {
+        // Nenhum teste do monólito fala com o serviço de verdade.
+        $this->cobranca = new FakeCobrancaClient();
+        \EstudaFitHub\Cobranca\Servico::usar($this->cobranca);
+    }
+
+    protected function migrarUnidade(int $unidadeId): void
+    {
+        \EstudaFitHub\Cobranca\Roteamento::definir($unidadeId, 'servico');
     }
 
     public function limparBanco(): void
