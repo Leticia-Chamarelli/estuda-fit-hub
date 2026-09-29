@@ -1,0 +1,76 @@
+#!/usr/bin/env php
+<?php
+
+declare(strict_types=1);
+
+require __DIR__ . '/../bootstrap.php';
+
+use Cobranca\Aplicacao\CronMensal;
+use Cobranca\Aplicacao\Faturas;
+use Cobranca\Infra\Db;
+
+$args = array_slice($argv, 2);
+$opcao = static function (string $nome, ?string $padrao = null) use ($args): ?string {
+    foreach ($args as $a) {
+        if (str_starts_with($a, "--{$nome}=")) {
+            return substr($a, strlen($nome) + 3);
+        }
+    }
+
+    return in_array("--{$nome}", $args, true) ? '1' : $padrao;
+};
+
+$comandos = [
+    'db:migrate' => ['Cria o schema (--se-vazio: só se ainda não existir)', static function () use ($opcao): int {
+        if ($opcao('se-vazio') !== null && Db::um("SHOW TABLES LIKE 'faturas'") !== null) {
+            echo "Schema já existe\n";
+
+            return 0;
+        }
+        $sql = (string) file_get_contents(__DIR__ . '/../database/schema.sql');
+        $sql = (string) preg_replace('/^\s*--.*$/m', '', $sql);
+        foreach (array_filter(array_map('trim', explode(';', $sql))) as $comando) {
+            Db::pdo()->exec($comando);
+        }
+        echo "Schema do serviço de Cobrança aplicado\n";
+
+        return 0;
+    }],
+    'faturas:gerar-mensais' => ['Cron do dia 1º ([YYYY-MM] [--particao=i/n] [--lote=500])', static function () use ($args, $opcao): int {
+        $competencia = isset($args[0]) && !str_starts_with($args[0], '--') ? $args[0] : date('Y-m');
+        [$i, $n] = array_map('intval', explode('/', $opcao('particao', '0/1')));
+        $r = (new CronMensal())->executar($competencia, $i, max(1, $n), (int) $opcao('lote', '500'));
+        echo "Competência {$competencia} partição {$i}/{$n}: {$r['geradas']} geradas, {$r['existentes']} já existiam\n";
+
+        return 0;
+    }],
+    'faturas:marcar-vencidas' => ['Cron diário: abertas vencidas viram vencidas e publicam FaturaVencida', static function (): int {
+        echo (new Faturas())->marcarVencidas(date('Y-m-d')) . " faturas marcadas como vencidas\n";
+
+        return 0;
+    }],
+    'gateway:registrar' => ['Registra no gateway faturas ainda sem referência (--loop)', static function () use ($opcao): int {
+        $faturas = new Faturas();
+        do {
+            $n = $faturas->registrarPendentes();
+            if ($n > 0) {
+                echo date('H:i:s') . " {$n} faturas registradas no gateway\n";
+            }
+            if ($opcao('loop') !== null) {
+                sleep(2);
+            }
+        } while ($opcao('loop') !== null);
+
+        return 0;
+    }],
+];
+
+$nome = $argv[1] ?? '';
+if (!isset($comandos[$nome])) {
+    fwrite(STDERR, "Uso: php bin/console <comando>\n\n");
+    foreach ($comandos as $chave => [$descricao]) {
+        fwrite(STDERR, sprintf("  %-26s %s\n", $chave, $descricao));
+    }
+    exit(1);
+}
+exit($comandos[$nome][1]());
